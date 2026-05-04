@@ -1,0 +1,126 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskType {
+  WATERING
+  FERTILIZING
+}
+
+enum NotificationChannel {
+  EMAIL
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model User {
+  // ========== AUTHENTICATION FIELDS START ==========
+  id                      String             @id @default(cuid())
+  email                   String             @unique
+  password                String             // Hashed password for authentication
+  name                    String?
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+  resetToken              String?            // Token for password reset
+  resetTokenExpiry        DateTime?          // Expiry time for reset token
+  // ========== AUTHENTICATION FIELDS END ==========
+  
+  // Location for weather-based watering
+  city                    String?            // City name for weather API
+  weatherEnabled          Boolean            @default(false) // Enable weather-based adjustments
+  
+  // Notification settings
+  fcmToken                String?            // Firebase Cloud Messaging token for push notifications
+  notificationPreferences Json?              // { pushEnabled, emailEnabled, preferredTime, dailyDigest }
+  
+  // Relations
+  plants                  Plant[]
+  notificationLogs        NotificationLog[]
+  
+  @@index([email])
+}
+
+model Plant {
+  id              String          @id @default(cuid())
+  name            String
+  species         String?
+  imageUrl        String?
+  location        String?
+  acquisitionDate DateTime?
+  notes           String?
+  userId          String
+  isDeleted       Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  careSchedules   CareSchedule[]
+  careTasks       CareTask[]
+  
+  @@index([userId, isDeleted])
+  @@index([name])
+}
+
+model CareSchedule {
+  id            String    @id @default(cuid())
+  plantId       String
+  taskType      TaskType
+  frequencyDays Int
+  timeOfDay     String    // HH:MM format
+  startDate     DateTime
+  nextDueDate   DateTime
+  notes         String?
+  isActive      Boolean   @default(true)
+  isDeleted     Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  plant         Plant     @relation(fields: [plantId], references: [id], onDelete: Cascade)
+  careTasks     CareTask[]
+  notificationLogs NotificationLog[]
+  
+  @@index([plantId, isActive, isDeleted])
+  @@index([nextDueDate, isActive])
+}
+
+model CareTask {
+  id          String   @id @default(cuid())
+  scheduleId  String
+  plantId     String
+  completedAt DateTime @default(now())
+  notes       String?
+  photoUrl    String?
+  createdAt   DateTime @default(now())
+  
+  schedule    CareSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  plant       Plant        @relation(fields: [plantId], references: [id], onDelete: Cascade)
+  
+  @@index([scheduleId])
+  @@index([plantId, completedAt])
+}
+
+model NotificationLog {
+  id          String              @id @default(cuid())
+  scheduleId  String
+  userId      String
+  channel     NotificationChannel
+  status      NotificationStatus
+  sentAt      DateTime            @default(now())
+  errorMessage String?
+  
+  schedule    CareSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([scheduleId, sentAt])
+  @@index([userId, sentAt])
+}

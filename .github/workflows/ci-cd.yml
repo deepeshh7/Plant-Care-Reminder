@@ -1,0 +1,153 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: test-secret-key-for-ci-cd-pipeline
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      
+      - name: Generate Prisma Client
+        run: pnpm prisma generate
+      
+      - name: Push database schema
+        run: pnpm prisma db push --skip-generate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      
+      - name: Run linting
+        run: pnpm run lint
+        continue-on-error: true
+      
+      - name: Run type checking
+        run: pnpm run type-check
+      
+      - name: Build application
+        run: pnpm run build
+        env:
+          SKIP_ENV_VALIDATION: true
+          RESEND_API_KEY: dummy-key-for-build
+          CRON_SECRET: dummy-secret-for-build
+      
+      - name: Run unit tests
+        run: pnpm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+        continue-on-error: true
+      
+      - name: Run UI tests
+        run: pnpm test:ui
+        continue-on-error: true
+        env:
+          CI: true
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      
+      - name: Run TC-Sync-01 tests
+        run: pnpm test:sync
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      
+      - name: Run TC-Perf-01 tests
+        run: pnpm test:perf
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      
+      - name: Run TC-Notify-01 tests
+        run: pnpm test:notify
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          RESEND_API_KEY: dummy-key-for-tests
+      
+      - name: Run TC-API-01 and TC-API-02 tests
+        run: pnpm test:api
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      
+      - name: Security audit
+        run: pnpm audit --audit-level=high || true
+        continue-on-error: true
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: .next/
+          retention-days: 7
+        if: success() && hashFiles('.next/**') != ''
+
+  deploy:
+    name: Deploy
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: .next/
+        continue-on-error: true
+      
+      - name: Deploy notification
+        run: |
+          echo "✅ Build successful!"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Ready for deployment to production"
+      
+      - name: Deploy to staging (placeholder)
+        run: echo "Deploying to staging environment..."
+        if: github.ref == 'refs/heads/develop'
+      
+      - name: Deploy to production (placeholder)
+        run: echo "Deploying to production environment..."
+        if: github.ref == 'refs/heads/main'
